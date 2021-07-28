@@ -1,0 +1,677 @@
+---
+title: "Random Forest Modelling for Predicting Rain in Australia"
+subtitle: "Using Tidymodels package in R"
+author: "FRK"
+date:  "`r format(Sys.Date(), '%B %d, %Y')`"
+output: 
+  html_document:
+    toc: TRUE
+    number_sections: TRUE
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, include = TRUE, message = FALSE, warning = FALSE, fig.height = 7, fig.width = 9)
+```
+
+# Loading packages
+
+We are going to use **Tidymodels** package, the latest developed package by Rstudio for modeling and machine learning methods.
+
+```{r}
+rm(list = ls())
+
+library(tidyverse)
+library(tidymodels)
+library(lubridate)
+library(skimr)
+library(ggplot2)
+```
+
+
+# Exploring Data
+
+## Reading and Glimpse of the Data
+
+```{r}
+
+#rm(list=ls())
+aus <- read_csv("weatherAUS.csv", na = "NA", col_types = cols(
+  Evaporation = col_double(),
+  Sunshine = col_double()
+))
+
+#### Summary of the data
+
+glimpse(aus)
+summary(aus)
+skim(aus)
+
+```
+
+The data is from various weather related data from many locations of Australia.  
+
+We are going to predict the variable **RainTomorrow**. So we want to predict if it is going to rain tomorrow or not based on today's data.
+
+
+
+```{r}
+
+### SUnshine looks important, but there are 70,000 missing values
+
+aus %>% 
+  select(Sunshine, RainTomorrow) %>% 
+  drop_na() %>% 
+  ggplot(aes(Sunshine, fill = RainTomorrow)) + 
+  geom_density( alpha = 0.3)
+
+### Evaporation does not seem important, as there is significant overlap
+
+aus %>% 
+  select(Evaporation, RainTomorrow) %>% 
+  drop_na() %>% 
+  ggplot(aes(Evaporation, fill = RainTomorrow)) + 
+  geom_density( alpha = 0.3)
+
+```
+
+
+## Drop Sunshine and Evaporation
+
+As these two variables have too many missing values.
+
+```{r}
+aus <- aus %>% select(-Sunshine, -Evaporation)
+```
+
+
+## Location wise Exploring the Data
+
+
+```{r}
+
+### Missing RainTomorrow by Location
+
+aus %>% 
+  select(Location, RainTomorrow) %>% 
+  count(Location, RainTomorrow) %>% 
+  arrange(n, Location) %>% 
+  filter(is.na(RainTomorrow)) %>%
+  mutate(total = sum(n)) %>% 
+  ggplot(aes(n , fct_reorder(as.factor(Location), n))) +
+  geom_col(position = "dodge")
+
+### Location wise Rain Percentage
+
+aus %>% 
+  select(Location, RainTomorrow) %>% 
+  count(Location, RainTomorrow) %>% 
+  drop_na() %>% 
+  group_by(Location) %>%
+  mutate(percent_Rain = n / sum(n)) %>% 
+  ggplot(aes(percent_Rain , Location, fill = RainTomorrow)) +
+  geom_col() +
+  ylab("Location") +
+  xlab("% of Rainy Days")
+```
+
+There are some locations with more rain than others.
+
+## Exploring Monthly Rain
+
+```{r, fig.height=9}
+
+aus %>% 
+  mutate(mon = lubridate::month(aus$Date, label = TRUE)) %>%
+  count(Location, mon, RainTomorrow) %>% 
+  drop_na() %>%
+  group_by(Location, mon) %>%
+  mutate(percent_Rain = n / sum(n)) %>% 
+  ggplot(aes(percent_Rain , mon, fill = RainTomorrow)) +
+  geom_col() +
+  facet_wrap(~Location)
+```
+
+Month seems to be a very important factor, when separated by Location
+
+## Temperature and RainTomorrow
+
+```{r}
+
+aus %>% 
+  select(MinTemp, RainTomorrow) %>% 
+  drop_na() %>% 
+  ggplot(aes(MinTemp, fill = RainTomorrow)) + 
+  geom_density( alpha = 0.3)
+
+aus %>% 
+  select(MaxTemp, RainTomorrow) %>% 
+  drop_na() %>% 
+  ggplot(aes(MaxTemp, fill = RainTomorrow)) + 
+  geom_density( alpha = 0.3)
+```
+
+
+Mintemp & Maxtemp doesnt seem too important, by could be useful location wise.
+
+## With Rainfall today
+
+```{r}
+
+aus %>% 
+  select(Rainfall, RainTomorrow) %>% 
+  drop_na() %>% 
+  ggplot(aes(Rainfall, fill = RainTomorrow)) + 
+  geom_density( alpha = 0.3) +
+  xlim(0, 5)
+
+aus %>% 
+  count(RainToday, RainTomorrow) %>% 
+  drop_na()
+
+chisq.test(table(aus$RainToday, aus$RainTomorrow))
+
+```
+
+Raifall seems important, observing the long tail of Yes category, and chisquare test is significant
+
+## Windgust and Direction
+
+```{r}
+
+
+
+aus %>% 
+  select(WindGustSpeed, RainTomorrow) %>% 
+  drop_na() %>% 
+  ggplot(aes(WindGustSpeed, fill = RainTomorrow)) + 
+  geom_density(alpha = 0.3)
+
+aus %>% 
+  select(WindGustDir, RainTomorrow) %>% 
+  count(WindGustDir, RainTomorrow) %>% 
+  drop_na() %>% 
+  group_by(WindGustDir) %>%
+  mutate(percent_Rain = n / sum(n)) %>% 
+  ggplot(aes(percent_Rain , WindGustDir, fill = RainTomorrow)) +
+  geom_col()
+
+```
+
+WindGustSpeed & WindGustDir is important
+
+## Wind Direction and RainTomorrow
+
+```{r}
+
+
+
+aus %>% 
+  select(WindDir9am, RainTomorrow) %>% 
+  count(WindDir9am, RainTomorrow) %>% 
+  drop_na() %>% 
+  group_by(WindDir9am) %>%
+  mutate(percent_Rain = n / sum(n)) %>% 
+  ggplot(aes(percent_Rain , WindDir9am, fill = RainTomorrow)) +
+  geom_col()
+
+aus %>% 
+  select(WindDir3pm, RainTomorrow) %>% 
+  count(WindDir3pm, RainTomorrow) %>% 
+  drop_na() %>% 
+  group_by(WindDir3pm) %>%
+  mutate(percent_Rain = n / sum(n)) %>% 
+  ggplot(aes(percent_Rain , WindDir3pm, fill = RainTomorrow)) +
+  geom_col()
+```
+
+Wind Direction is also important
+
+```{r}
+
+### Humidity seems to have a big effect
+
+aus %>% 
+  select(Humidity9am, RainTomorrow) %>% 
+  drop_na() %>% 
+  ggplot(aes(Humidity9am, fill = RainTomorrow)) + 
+  geom_density(alpha = 0.3)
+
+
+aus %>% 
+  select(Humidity3pm, RainTomorrow) %>% 
+  drop_na() %>% 
+  ggplot(aes(Humidity3pm, fill = RainTomorrow)) + 
+  geom_density(alpha = 0.3)
+
+### Pressure seems to have a moderate effect
+
+aus %>% 
+  select(Pressure9am, RainTomorrow) %>% 
+  drop_na() %>% 
+  ggplot(aes(Pressure9am, fill = RainTomorrow)) + 
+  geom_density(alpha = 0.3)
+
+
+aus %>% 
+  select(Pressure3pm, RainTomorrow) %>% 
+  drop_na() %>% 
+  ggplot(aes(Pressure3pm, fill = RainTomorrow)) + 
+  geom_density(alpha = 0.3)
+
+### Temperature seems important
+
+aus %>% 
+  select(Temp9am, RainTomorrow) %>% 
+  drop_na() %>% 
+  ggplot(aes(Temp9am, fill = RainTomorrow)) + 
+  geom_density(alpha = 0.3)
+
+aus %>% 
+  select(Temp3pm, RainTomorrow) %>% 
+  drop_na() %>% 
+  ggplot(aes(Temp3pm, fill = RainTomorrow)) + 
+  geom_density(alpha = 0.3)
+
+graphics.off()
+
+```
+
+
+
+# Dataset for Modeling, After EDA
+
+Here we select the variables that have some relation with the variable Rain Tomorrow. So we create a new dataset with reduced variable, this dataset will be used for building our Random Forest Model. The data had some missing data. We dropped these missing observations from the data. Also Sunshine and Evaporation variable has too many missing observations. So we will not use these two variables, otherwise we remove out almost half of our data.
+
+```{r}
+aus_df <- aus %>% 
+  select(Location,
+         RainTomorrow,
+         WindGustDir,
+         WindDir9am,
+         WindDir3pm,
+         RainToday,
+         WindGustSpeed,
+         MinTemp,
+         MaxTemp,
+         Rainfall,
+         Humidity9am,
+         Humidity3pm,
+         Pressure9am,
+         Pressure3pm,
+         Temp3pm
+         ) %>% 
+  mutate(Month = factor(lubridate::month(aus$Date, label = TRUE), ordered = FALSE)) %>% ### Extracted only months from the Date Variable
+  drop_na() %>% 
+  mutate_if(is.character, as.factor) %>% 
+            mutate(RainTomorrow = relevel(RainTomorrow, ref = "Yes")) 
+
+```
+
+## Summary of the Final Data
+
+```{r}
+glimpse(aus_df)
+
+### Check Level of Dependent Variable
+levels(aus_df$RainTomorrow)
+
+```
+
+Our model will take "Yes" as success level of RainTomorrow variable.
+
+# Model Fitting
+
+## Split Data in Training and Testing sets
+
+We fit the model using the training data, and evaluate or model on the testing dataset.
+
+```{r}
+
+### We will use Logistic Regression and Random Forest for Modeling ###
+
+set.seed(123)
+aus_split <- initial_split(aus_df, strata = RainTomorrow)
+aus_train <- training(aus_split)
+aus_test <- testing(aus_split)
+aus_split # Shows Training/Testing/Total Observations
+
+```
+
+## Create Cross Validation Datasets
+
+We create Cross Validation data sets, we use these datasets for tuning our Random Forest Model's Hyperparameters. We use the Training set for cross validation. We create 10-folds cross validation dataset.  
+
+```{r}
+
+aus_cv <- vfold_cv(aus_train, strata = RainTomorrow)
+aus_cv
+```
+
+
+## Model Specification
+
+In this step we specify the models, the engine to fit the model, and some other specifications. We will fit a logistic regression too, just to compare our RF model.
+
+
+```{r}
+
+### Logistic Regression
+
+glm_spec <- logistic_reg() %>%
+  set_engine("glm")
+
+glm_spec
+
+### Random Forest
+rf_spec <- rand_forest(
+  mtry = tune(), ### We tune this hyperparameter via Cross Validation
+  trees = 500,   ### We grow 500 random trees, That's going to be used for prediction
+  min_n = tune() ### We tune this hyperparameter via Cross Validation
+) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+
+rf_spec
+
+```
+
+## Workflow
+
+Workflow allows to specify steps of model fitting. First we specify the formula, then we can add the model in the workflow. Workflow allows us to add model specification, recipe of feature engineering, model etc in a lego block type style. This is really useful for changing any part of the model very easily.
+
+
+```{r}
+
+### Workflow
+
+aus_wf <- workflow() %>%
+  add_formula(RainTomorrow ~ .)
+
+aus_wf
+
+### Parallel Processing
+
+doParallel::registerDoParallel()
+```
+
+## Fitting Logistic Regression
+
+### Fit logistic on the Cross Validated Dataset
+
+```{r}
+glm_rs <- aus_wf %>%
+  add_model(glm_spec) %>%
+  fit_resamples(
+    resamples = aus_cv,
+    control = control_resamples(save_pred = TRUE)
+  )
+```
+
+### Assess the performance of the logistic model 
+```{r}
+glm_rs
+
+collect_metrics(glm_rs)
+```
+
+### Sensitivity & Specificity of Logistic Model
+
+```{r}
+glm_rs %>%
+  collect_predictions() %>% 
+  sensitivity(RainTomorrow, .pred_class)
+
+glm_rs %>%
+  collect_predictions() %>% 
+  specificity(RainTomorrow, .pred_class)
+```
+
+### Confusion Matrix of Logistic Model
+
+```{r}
+glm_rs %>%
+  conf_mat_resampled()
+
+```
+
+### Fit the logistic model on Whole training data and Evaluate on Test Data
+
+```{r}
+aus_final <- aus_wf %>%
+  add_model(glm_spec) %>%
+  last_fit(aus_split)
+
+aus_final
+
+aus_final %>% collect_metrics()
+
+## Confusion matrix on the Test data
+
+aus_final %>% 
+  collect_predictions() %>%
+  conf_mat(RainTomorrow, .pred_class)
+
+aus_final$.workflow[[1]] %>%
+  tidy(exponentiate = TRUE) %>% 
+  arrange(p.value) %>% 
+  filter(term != "(Intercept)", p.value < 0.05) %>% 
+  knitr::kable()
+
+```
+
+
+
+## Fitting Random Forest Model via tuning HyperParamaters *mtry* & *min_n*
+
+*mtry* is number of variables to randomly consider for splitting at each node. *mtry* number of variables are selected at random, then split the node according to the variable that produce highest PURITY. *min_n* is the number observation in a node to be considered to be split further. *min_n* is used to control overfitting.  
+
+Number of trees to build in a random forest is also a hyperparameter. But we choose it to be 500 this time. Our model takes an observation, then predicts the outcome of this observation on 500 trees, then takes the highest appearing classification among these 500 trees. That's the idea behind RF model.   
+
+If we fit a very complex tree, it will have many terminal nodes, and it will have high variance on predictions for a new dataset.  
+
+All these hyperparameters need to be decided by experimenting on the dataset, as there is no particular rule for choosing their values.
+
+Both *mtry* and *min_n* will be choosen via a cross validation method. First we take a combination of *mtry* and *min_n*, then fit a random forest model with each combination. And for each such random forest we evaluate the performance of each tree in our cross validation datasets, and record the performance via accuracy and AUC.
+
+Then we can check which combination of *mtry* and *min_n* results in highest accuracy and AUC. Then we fit a model again on our whole Training dataset using this combination. and evaluate on the test dataset to check for overfitting.
+
+Tidymodels *tune_grid* allows us to tune models via cross validation.
+
+```{r}
+
+## Create a workflow for tuning random forest
+## Add the random forest model to the workflow
+## Then start tuning ===>>>
+
+tune_wf <- aus_wf %>% 
+  add_model(rf_spec)
+
+tune_wf
+
+```
+
+### Tuning RF via Cross Validation and Save Results 
+
+We take 25 combinations of *mtry* and *min_n* for tuning. The model will automatically decide on the values of the combinations. Also number of trees in each random forest model is set to 500 in *rf_spec*. These numbers could be increased, but for this time, it is okay to use lower numbers, as it takes long time to tune Random Forest. 
+
+I choose 25 grids because its slightly higher than our Number of Variables (16). So setting 25 will assure we try all combinations.
+
+```{r}
+
+### Takes 300 mins
+
+rf_rs_tune <- tune_grid(
+  object = tune_wf,
+  resamples = aus_cv,
+  grid = 25,
+  control = control_resamples(save_pred = TRUE)
+)
+
+### Results of Tuning
+rf_rs_tune
+
+### Check Accuracy and AUC after tuning
+rf_rs_tune %>% 
+  collect_metrics()
+
+```
+
+```{r}
+# Remove previous Graphs from memory
+graphics.off()
+
+```
+
+
+### Observe mtry & min_n combinations via plot
+
+```{r, fig.height=8, fig.width=8}
+
+autoplot(rf_rs_tune) 
+
+```
+
+The autoplot shows combination of *mtry* and *min_n*, and shows for which values the Accuracy and AUC have highest values. This helps us to choose the BEST hyperparameter values. We can either select that gives best accuracy or the on that results in best AUC. This depends on the problem and what we are predicting and classifying.
+
+
+### Check Sensitivity and Specifity by Each Fold in a ROC curve
+
+
+```{r}
+rf_rs_tune %>% 
+  collect_predictions() %>% 
+  group_by(id) %>% 
+  roc_curve(RainTomorrow, .pred_Yes) %>%
+  ggplot(aes(1 - specificity, sensitivity, color = id)) +
+  geom_abline(lty = 2, color = "gray80", size = 1.5) +
+  geom_path(show.legend = TRUE, alpha = 0.6, size = 1.2) +
+  coord_equal()
+
+```
+
+ROC curves indicate that each Fold performs similar with True Positive and False Positive classification, indicating the robustness of predictions via Random Forest.
+
+
+### Select best model according to Accuracy and AUC
+
+```{r}
+
+best_acu <- select_best(rf_rs_tune, "accuracy")
+best_acu
+
+### Also check which model has the highest AUC
+
+best_auc <- select_best(rf_rs_tune, "roc_auc")
+best_auc
+
+```
+
+### Finalize Model After HyperParameter Tuning and according to accuracy
+
+We decide to go with accuracy this time. And *finalize* the model. Then fit this final model on our testing data and evaluate on training data.
+
+```{r}
+
+rf_final <- finalize_model(
+  rf_spec,
+  best_acu
+)
+
+rf_final #### This is the Best Model from our CV
+```
+
+## Test Data and model evaluation
+
+### Fit the final selected TUNED model in full Training Data & Predict on Test data & Check for overfitting
+
+The *last_fit* fits the model on Training and evaluates on Test dataset of the *split*.
+
+```{r}
+final_res <- aus_wf %>%
+  add_model(spec = rf_final) %>%
+  last_fit(aus_split)
+```
+
+### Check Accuracy & OVerfitting on Test Data
+
+```{r}
+final_res %>%
+  collect_metrics()
+```
+
+About the same as in CV. So we didnt overfit our data on Training set.
+
+### Confusion Matrix on Test Data
+
+```{r}
+final_res %>%
+  collect_predictions() %>% 
+  conf_mat(RainTomorrow, .pred_class)
+
+final_res %>%
+  collect_predictions() %>% 
+  conf_mat(RainTomorrow, .pred_class) %>% 
+  autoplot(type = "heatmap")
+
+```
+
+### Sensitivity & Specificity
+
+```{r}
+final_res %>%
+  collect_predictions() %>% 
+  sensitivity(RainTomorrow, .pred_class)
+
+final_res %>%
+  collect_predictions() %>% 
+  specificity(RainTomorrow, .pred_class)
+
+```
+
+
+### Variable Importance
+
+Fits the model multiple times, by permutation of variables. If the predictions change significantly after permutation of a variable, that variable has high impact on outcome.
+
+```{r}
+library(vip)
+
+rf_final %>%
+  set_engine("ranger", importance = "permutation") %>%
+  fit(RainTomorrow ~ . ,
+      data = aus_df
+  ) %>%
+  vip(geom = "col")
+```
+
+
+
+# Comment on the Model
+
+## Findings
+
+- The model works good on predicting Not having Rain Tomorrow.
+- But Predicting having Rain tomorrow in only 50-50 chance with this model.
+- Overall The Random Forest Model Performs Slightly Better than Logistic Model.
+- Humidity, Temperature, Pressure seems to be the most important variable in predicting tomorrows Rain.
+- Locations seem to be significant in the logistic regression, but not in Random Forest Model.
+
+
+## Further Improvement
+
+- Impute Missing Values
+- Impute Sunshine and Evaporation and use in the model building, alothough it may not be realistic.
+- Try out Downsampling, as the predicted class is imbalanced (unequal sample size)
+- Try different model, like XGboost, KNN.
+
+
+
+# Save the model and results for further use and deployment
+
+```{r, eval=FALSE, include=TRUE}
+save.image("Random_Forest_RDS.RData")
+
+```
+
+So That's it for fitting models in tidymodels package in R.
